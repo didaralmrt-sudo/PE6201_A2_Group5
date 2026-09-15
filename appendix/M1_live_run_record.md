@@ -34,14 +34,14 @@ set OPENROUTER_API_KEY=your_key
 python run_eval.py --all
 ```
 
-The run must use `BACKEND=live` (set in `config.py` or the environment). With
-that setting, `run_eval.py` writes its output to **`results_live.json`** instead
-of `results.json`. This stops a later scripted run from overwriting the live
-evidence.
+The run must use `BACKEND=live` (set in `config.py` or the environment). In the
+live run we performed, the harness saved its output to **`results_live.json`**
+as a local backup. Per the project's report-only decision, that JSON is **not
+committed** — the numbers in this document are the authoritative record.
 
-Note: a clean clone defaults to the **scripted** backend and produces
-`results.json` with no key and no network. The live run above is a manual step
-on top of that.
+Note: a clean clone of the submitted code defaults to the **scripted** backend
+and produces `results.json` with no key and no network (this is what a marker
+runs for D5(a)). The live run above is a manual step on top of that.
 
 ## 4. Results summary
 
@@ -107,11 +107,9 @@ nine fail. Total passed trials = 8 of 33.
 
 ## 7. Where the raw data lives
 
-- **`results_live.json`** — full per-trial records for this run. Commit it to
-  the repository as the live evidence file.
+- **`results_live.json`** — full per-trial records from the live run we performed. Kept on the local machine as a backup; **not committed to the repository** (the project records live results in the report, not as a JSON artefact).
 - **This document / the M1 report** — the canonical numbers a marker reads.
 
 **Important:** re-running in live mode overwrites `results_live.json`;
 re-running in scripted mode writes `results.json`. Keep both files and do not
-let one overwrite the other. `run_eval.py` now writes the live output to
-`results_live.json` on purpose, so this is handled automatically.
+let one overwrite the other, so this must be done with care. The committed `run_eval.py` defaults to the scripted backend and writes `results.json`; the live run we performed used a temporary live configuration that saved `results_live.json` locally as a backup, which is **not committed** to the repository.
