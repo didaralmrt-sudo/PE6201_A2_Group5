@@ -26,6 +26,8 @@ moves is how you test the parts you wrote.
 ====================================================================
 """
 import json
+import time
+import urllib.error
 import urllib.request
 
 import config
@@ -132,6 +134,134 @@ SCRIPTS = {
          "thought": "Eight calls, four turns. Not an approve and not a "
                     "decline: one decision letter covering both."},
     ],
+
+    # ---- 2. CLM-8850 : single line, short run -------------------------
+    "CLM-8850": [
+        {"thought": "Fetch the claim.",
+         "calls": [("get_claim", {"claim_id": "CLM-8850"})]},
+        {"thought": "Policy, single-line coverage and hospital are independent.",
+         "calls": [("lookup_policy", {"member_id": "M-5502"}),
+                   ("check_coverage", {"code": "99213", "policy_id": "POL-6001"}),
+                   ("lookup_hospital", {"hospital_id": "H-207"})]},
+        {"thought": "One line, covered, no preauth. Issue.",
+         "calls": [("issue_decision_letter", {
+             "claim_id": "CLM-8850", "decision": "approve_in_principle",
+             "lines_resolved": 1, "approved_total": 180})]},
+        {"final": {"decision": "approve_in_principle",
+                   "reason": "Single line 99213 outpatient consultation, "
+                             "covered, policy active, on panel. Approved 180.",
+                   "lines_resolved": 1, "approved_total": 180},
+         "thought": "Short run, one line."},
+    ],
+
+    # ---- 3. CLM-8960 : four lines, long run ---------------------------
+    "CLM-8960": [
+        {"thought": "Fetch the claim.",
+         "calls": [("get_claim", {"claim_id": "CLM-8960"})]},
+        {"thought": "Policy, hospital and all four per-line coverage checks "
+                    "are mutually independent.",
+         "calls": [("lookup_policy", {"member_id": "M-5502"}),
+                   ("lookup_hospital", {"hospital_id": "H-114"}),
+                   ("check_coverage", {"code": "99213", "policy_id": "POL-6001"}),
+                   ("check_coverage", {"code": "80053", "policy_id": "POL-6001"}),
+                   ("check_coverage", {"code": "70553", "policy_id": "POL-6001"}),
+                   ("check_coverage", {"code": "45378", "policy_id": "POL-6001"})]},
+        {"thought": "No line needs preauth, none excluded. Issue all four.",
+         "calls": [("issue_decision_letter", {
+             "claim_id": "CLM-8960", "decision": "approve_in_principle",
+             "lines_resolved": 4, "approved_total": 1990})]},
+        {"final": {"decision": "approve_in_principle",
+                   "reason": "Four lines, all covered, no preauth, none "
+                             "excluded. Approved 1990.",
+                   "lines_resolved": 4, "approved_total": 1990},
+         "thought": "Long run, four lines in one parallel turn."},
+    ],
+
+    # ---- 4. CLM-8861 : preauth present and valid ----------------------
+    "CLM-8861": [
+        {"thought": "Fetch the claim.",
+         "calls": [("get_claim", {"claim_id": "CLM-8861"})]},
+        {"thought": "Policy, hospital and both coverage checks independent.",
+         "calls": [("lookup_policy", {"member_id": "M-5502"}),
+                   ("lookup_hospital", {"hospital_id": "H-207"}),
+                   ("check_coverage", {"code": "27447", "policy_id": "POL-6001"}),
+                   ("check_coverage", {"code": "80053", "policy_id": "POL-6001"})]},
+        {"thought": "Only 27447 needs a preauth; fetch it once coverage said so.",
+         "calls": [("get_preauthorisation", {"member_id": "M-5502",
+                                             "procedure_code": "27447",
+                                             "date_of_service": "2026-09-05"})]},
+        {"thought": "PA-5702 valid. Issue both lines.",
+         "calls": [("issue_decision_letter", {
+             "claim_id": "CLM-8861", "decision": "approve_in_principle",
+             "lines_resolved": 2, "approved_total": 8290})]},
+        {"final": {"decision": "approve_in_principle",
+                   "reason": "27447 knee replacement covered, PA-5702 cited "
+                             "valid 2026-09-05; 80053 covered. Approved 8290.",
+                   "lines_resolved": 2, "approved_total": 8290},
+         "thought": "Preauth present and valid."},
+    ],
+
+    # ---- 5. CLM-8910 : lapsed policy -> escalate ----------------------
+    "CLM-8910": [
+        {"thought": "Fetch the claim.",
+         "calls": [("get_claim", {"claim_id": "CLM-8910"})]},
+        {"thought": "Policy lookup alone settles it: status is lapsed.",
+         "calls": [("lookup_policy", {"member_id": "M-4471"})]},
+        {"final": {"decision": "escalate", "trigger": "policy_lapsed",
+                   "reason": "Policy POL-5588 status lapsed (expired "
+                             "2026-03-31). Nothing else matters; escalate.",
+                   "trigger": "policy_lapsed"},
+         "thought": "Lapsed policy is a hard stop."},
+    ],
+
+    # ---- 6. CLM-8888 : preauth absent -> request_document ------------
+    "CLM-8888": [
+        {"thought": "Fetch the claim.",
+         "calls": [("get_claim", {"claim_id": "CLM-8888"})]},
+        {"thought": "Policy, hospital and the three per-line coverage checks.",
+         "calls": [("lookup_policy", {"member_id": "M-6118"}),
+                   ("lookup_hospital", {"hospital_id": "H-114"}),
+                   ("check_coverage", {"code": "47120", "policy_id": "POL-7220"}),
+                   ("check_coverage", {"code": "62480", "policy_id": "POL-7220"}),
+                   ("check_coverage", {"code": "31255", "policy_id": "POL-7220"})]},
+        {"thought": "62480 requires preauth; look for it.",
+         "calls": [("get_preauthorisation", {"member_id": "M-6118",
+                                             "procedure_code": "62480",
+                                             "date_of_service": "2026-09-08"})]},
+        {"thought": "No approval exists. NONE is not 'uncovered' - it is a "
+                    "REQUEST for the reference. Issue request_document.",
+         "calls": [("issue_decision_letter", {
+             "claim_id": "CLM-8888", "decision": "request_document",
+             "lines_resolved": 3, "approved_total": 0,
+             "refused_total": 0})]},
+        {"final": {"decision": "request_document",
+                   "reason": "62480 requires pre-authorisation; no valid PA "
+                             "found for M-6118 on 2026-09-08, so request the "
+                             "reference. 47120 covered; 31255 excluded EX-14.",
+                   "lines_resolved": 3},
+         "thought": "Preauth absent -> request, not refuse."},
+    ],
+
+    # ---- 7. CLM-8933 : duplicate of a decided claim -> escalate -------
+    "CLM-8933": [
+        {"thought": "Fetch the claim.",
+         "calls": [("get_claim", {"claim_id": "CLM-8933"})]},
+        {"thought": "Policy, hospital, coverage AND the duplicate check are all "
+                    "independent of each other (all need only the claim fields).",
+         "calls": [("lookup_policy", {"member_id": "M-2214"}),
+                   ("lookup_hospital", {"hospital_id": "H-114"}),
+                   ("check_coverage", {"code": "47120", "policy_id": "POL-3310"}),
+                   ("check_duplicate_claim", {
+                       "member_id": "M-2214", "hospital_id": "H-114",
+                       "date_of_service": "2026-08-20",
+                       "lines": [{"code": "47120", "amount": 1500}]})]},
+        {"final": {"decision": "escalate", "trigger": "duplicate_claim",
+                   "reason": "Matches a previously decided claim on all four "
+                             "facts (member, hospital, date, lines). This is a "
+                             "resubmission - escalate for human review.",
+                   "trigger": "duplicate_claim"},
+         "thought": "Duplicate detected on the four facts, not the claim id."},
+    ],
 }
 
 
@@ -185,30 +315,105 @@ class LiveBackend:
         self.case_id = case_id
         self.tools = tool_descriptors
         self.system_prompt = system_prompt
+        self.last_usage = (0, 0)   # (prompt_tokens, completion_tokens) from the most recent call
 
     def next_move(self, transcript):
         messages = [{"role": "system", "content": self.system_prompt}]
         for entry in transcript:
             messages.append({"role": entry["role"], "content": entry["content"]})
-        raw = _live_call(messages)
+        # raw = _live_call(messages)
+        raw, usage = _live_call(messages)   # 原来是 raw = _live_call(messages)
+        self.last_usage = usage             # ← 新增
         return _parse_move(raw)
 
-    @staticmethod
-    def token_estimate(transcript):
+    # @staticmethod
+    def token_estimate(self,transcript):
         # Replace with the usage numbers the API returns. Estimating here
         # and calling it measured is the mistake D6 punishes.
-        return 0, 0
+        # return 0, 0
+        return self.last_usage
 
 
 def _parse_move(text):
-    """The model must answer in JSON. Anything else is a run you cannot
-    grade, so say so loudly rather than guessing."""
+    """The model must answer in JSON. Be tolerant of the ways a small model
+    wraps or truncates JSON - markdown fences, leading/trailing prose, and an
+    unterminated final object - before falling back. The whole thing is
+    wrapped so NO malformed response can ever crash a full --all run; worst
+    case it falls back to escalate and the run keeps going.
+    """
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"final": {"decision": "escalate",
-                          "reason": "model did not return parseable JSON"},
-                "thought": "unparseable: %s" % text[:200]}
+        import re
+        if not text or not text.strip():
+            return {"final": {"decision": "escalate",
+                              "reason": "model returned empty output"},
+                    "thought": "empty"}
+        raw = text.strip()
+        fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if fence:
+            raw = fence.group(1)
+        try:
+            obj = json.loads(raw)
+            if _is_valid_move(obj):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            cand = m.group(0)
+            try:
+                obj = json.loads(cand)
+                if _is_valid_move(obj):
+                    return obj
+            except json.JSONDecodeError:
+                closed = _try_close(cand)
+                if closed is not None and _is_valid_move(closed):
+                    return closed
+    except Exception:
+        pass
+    return {"final": {"decision": "escalate",
+                      "reason": "model did not return parseable JSON"},
+            "thought": "unparseable: %s" % (text or "")[:200]}
+
+
+def _is_valid_move(obj):
+    """Only an object carrying a final decision or at least one tool call is
+    a usable move; otherwise agent.py would KeyError on move['tool']."""
+    if not isinstance(obj, dict):
+        return False
+    return ("final" in obj) or ("calls" in obj) or ("tool" in obj)
+
+
+def _try_close(s):
+    """Best-effort: close an unterminated JSON object/array. Returns a parsed
+    object, or None if it cannot be salvaged. NEVER raises."""
+    try:
+        depth = 0
+        in_str = False
+        esc = False
+        for ch in s:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch in "{[":
+                depth += 1
+            elif ch in "}]":
+                depth -= 1
+        if depth <= 0:
+            return None
+        s = s.rstrip()
+        if s.endswith(","):
+            s = s[:-1]
+        return json.loads(s + "}" * depth)
+    except Exception:
+        return None
 
 
 def _live_call(messages):
@@ -227,15 +432,39 @@ def _live_call(messages):
         "model": config.MODEL,
         "messages": messages,
         "temperature": 0,
+        "max_tokens": 4096,
+        # Force structured output. gpt-4o-mini otherwise tends to answer the
+        # final routing step in PROSE, which _parse_move can only fall back
+        # on -> every trial reads as escalate (0%). JSON mode makes it emit a
+        # JSON object every turn, and keeps responses short so a single call
+        # is far less likely to run past the read timeout.
+        "response_format": {"type": "json_object"},
     }).encode()
-    req = urllib.request.Request(
-        config.BASE_URL.rstrip("/") + "/chat/completions",
-        data=body,
-        headers={"Authorization": "Bearer " + config.API_KEY,
-                 "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        payload = json.load(r)
-    return payload["choices"][0]["message"]["content"]
+    # A single slow response used to kill the whole --all run: no retry, and
+    # a 60s read timeout. Retry transient network failures instead, with a
+    # longer ceiling, so one unlucky request does not waste the whole battery.
+    last_err = None
+    for attempt in range(1, 4):                 # up to 3 attempts
+        req = urllib.request.Request(
+            config.BASE_URL.rstrip("/") + "/chat/completions",
+            data=body,
+            headers={"Authorization": "Bearer " + config.API_KEY,
+                     "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                payload = json.load(r)
+            usage = payload.get("usage", {})
+            return (payload["choices"][0]["message"]["content"],
+                    (usage.get("prompt_tokens", 0),
+                     usage.get("completion_tokens", 0)))
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            print("    [live] request failed (%d/3): %r - retrying..."
+                  % (attempt, e))
+            time.sleep(2 * attempt)
+    raise SystemExit(
+        "\n  live backend: 3 attempts all failed: %r\n"
+        "  Check your network / OpenRouter status, then re-run.\n" % (last_err,))
 
 
 def make_backend(case_id, tool_descriptors=None, system_prompt=""):

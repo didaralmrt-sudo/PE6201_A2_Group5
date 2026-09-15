@@ -1,27 +1,22 @@
 """
-PE6201 · A2 scaffold — THE AGENT LOOP  (D1)
+PE6201 · A2 scaffold — THE AGENT LOOP, SEQUENTIAL VARIANT  (D1 / D2(c))
 ====================================================================
-    thought -> action -> observation -> repeat -> final
+This is the SAME hand-rolled ReAct loop as `agent.py`, with exactly ONE
+behavioural change: in each tool-calling turn it executes ONLY THE FIRST
+call of `move["calls"]` and then returns to the loop for the next move.
+That forces one tool call per turn (a strictly sequential schedule).
 
-That is the whole of ReAct, and it is hand-rolled here on purpose. No
-framework owns your loop: when it misbehaves you need to be able to
-read the twelve lines that did it.
+`agent.py` (the shipped, default loop) may pack several independent calls
+into one turn. This file is the counterpart used to produce the
+"sequential" column of the D2(c) comparison: same evaluation set, same
+prompts, same tools — only the call-scheduling differs.
 
-WHAT MAKES THIS AN AGENT RATHER THAN A WORKFLOW: the number of steps is
-decided by the DATA, not by you. A one-line claim with a live policy is
-a short run. A four-line claim with a pre-authorisation to chase is a
-long one. You did not write that branch - the record did.
+Run it (scripted backend, free):
+    python run_d2c.py            # or your own harness that imports this module
 
---------------------------------------------------------------------
-INSTRUMENTATION IS NOT OPTIONAL
-
-Every run records turns, tokens, cost, every tool call and every
-guardrail event. D6's cost model and D7's loop failure both need
-numbers that were captured WHILE THE RUN HAPPENED. A team that adds
-instrumentation afterwards has to run the whole battery again.
-
-You cannot report a failure you had no way of noticing.
-====================================================================
+The numbers it produces are the "sequential" side of
+`M1_D2c_sequential_vs_parallel.md`. Turns and pass-rate are exact and
+reproducible; token/cost on the scripted backend are ESTIMATES.
 """
 import time
 
@@ -35,46 +30,30 @@ from guardrails import Guardrails, GuardrailStop
 def run_case(case_id, problem=None, approve=None, verbose=False):
     """Run ONE case from a clean state and return the decision record.
 
-    ISOLATION (D4): everything this function needs is created inside it.
-    No case may depend on a previous one having run - so no module-level
-    counters, no shared guardrail object, no leftover transcript.
+    SEQUENTIAL VARIANT: one tool call per turn (see module docstring).
     """
     problem = problem or config.PROBLEM
     started = time.time()
 
     guards = Guardrails(config.MAX_TURNS, config.MAX_TOKENS_PER_RUN,
                         config.AUTONOMY)
-    # WHAT THE MODEL IS TOLD. On the scripted backend these are ignored -
-    # the moves are pre-written, so no prompt is ever sent. On the live
-    # backend this IS the experiment D2(b) measures: the descriptors and
-    # the routing rules, assembled by prompt.build_system_prompt().
-    #     python3 run_eval.py --prompt      to see the exact text
     backend = make_backend(
         case_id,
         tool_descriptors=[tools.DESCRIPTORS[n] for n in tools.REGISTRY[problem]
                           if n in tools.DESCRIPTORS],
         system_prompt=prompt.build_system_prompt(problem))
 
-    transcript = []      # what the model would see
-    evidence = []        # every tool actually called, in order
+    transcript = []
+    evidence = []
 
     transcript.append({"role": "user",
                        "content": "Process insurance claim %s. Start by calling "
                                   "get_claim with claim_id='%s'." % (case_id, case_id)})
-    # TURNS ARE TOOL-CALLING TURNS. The concluding move - where the agent
-    # writes its decision record - is bookkeeping, not a turn. This is the
-    # same convention Appendix A uses: CLM-8842 is "turns": 4 with EIGHT
-    # tool calls, because the gated action is a turn like any other and
-    # the write-up afterwards is not. Count them any other way and your
-    # D2(c) arithmetic stops agreeing with the brief.
     turns = 0
-    iterations = 0       # loop-safety only; never reported
+    iterations = 0
     tokens_in = tokens_out = 0
     stopped_by = None
 
-    # On the scripted backend the gate auto-approves so the run stays
-    # deterministic. The RECORD still shows the gate was reached and
-    # passed, which is what a marker looks for.
     if approve is None:
         approve = lambda action, payload: True
 
@@ -93,25 +72,20 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
                 label = ("conclude" if "final" in move else "turn %d" % (turns + 1))
                 print("  %-9s · %s" % (label, move.get("thought", "")[:88]))
 
-            # ---- conclude -------------------------------------------
             if "final" in move:
                 record = dict(move["final"])
                 break
 
-            # ---- act: one turn may carry SEVERAL calls ---------------
+            # ---- act: SEQUENTIAL — ONE call per turn ---------------
             turns += 1
             guards.check_turns(turns)
 
-            # Only calls INDEPENDENT of each other belong in one turn.
-            # A dependency chain cannot be shortened by running things at
-            # once - that is why Problem B saves less than Problem A.
             calls = move.get("calls") or [(move.get("tool"), move.get("args", {}))]
+            # SEQUENTIAL CHANGE: keep only the first call; the loop returns
+            # for the next move to issue the remaining calls one at a time.
+            calls = calls[:1]
             observations = []
 
-            # Defensive: a small model occasionally "calls" a tool that does
-            # not exist (e.g. it emits {"tool":"escalate"} as if escalate were
-            # an action). tools.call would raise KeyError and kill the WHOLE
-            # --all run. Conclude safely instead.
             known = set(tools.REGISTRY.get(problem, {}))
             bad = [n for n, _ in calls if n not in known]
             if bad:
@@ -123,7 +97,6 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
             for name, args in calls:
                 guards.check_duplicate(name, args)
 
-                # THE GATE goes in front of the irreversible step only.
                 if name == tools.GATED_ACTION.get(problem):
                     if not guards.gate(name, args, approve):
                         raise GuardrailStop(
@@ -144,8 +117,6 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
                                "content": repr(observations)})
 
     except GuardrailStop as stop:
-        # A LOUD STOP. The record says what halted the run and where, so
-        # this never looks like a quiet wrong answer.
         stopped_by = stop.reason
         record = {"decision": "escalate",
                   "reason": "halted by the %s guardrail - %s"
