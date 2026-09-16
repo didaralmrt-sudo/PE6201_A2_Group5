@@ -1,0 +1,120 @@
+[
+  {
+    "claim_id": "M5-CLM-9001",
+    "member_id": "M-2214",
+    "hospital_id": "H-114",
+    "date_of_service": "2026-09-26",
+    "narrative": "",
+    "documents": [
+      "discharge_summary.pdf",
+      "itemised_bill.pdf"
+    ],
+    "lines": [
+      {
+        "code": "47120",
+        "amount": 1400
+      },
+      {
+        "code": "62480",
+        "amount": 780
+      },
+      {
+        "code": "31255",
+        "amount": 300
+      }
+    ]
+  },
+  {
+    "claim_id": "M5-CLM-9002",
+    "member_id": "M-6118",
+    "hospital_id": "H-114",
+    "date_of_service": "2026-09-27",
+    "narrative": "",
+    "documents": [
+      "discharge_summary.pdf",
+      "itemised_bill.pdf"
+    ],
+    "lines": [
+      {
+        "code": "62480",
+        "amount": 2000
+      }
+    ]
+  },
+  {
+    "claim_id": "M5-CLM-9003",
+    "member_id": "M-2214",
+    "hospital_id": "H-114",
+    "date_of_service": "2026-08-20",
+    "narrative": "",
+    "documents": [
+      "discharge_summary.pdf",
+      "itemised_bill.pdf"
+    ],
+    "lines": [
+      {
+        "code": "47120",
+        "amount": 1500
+      }
+    ]
+  },
+  {
+    "claim_id": "M5-CLM-9004",
+    "member_id": "M-2214",
+    "hospital_id": "H-330",
+    "date_of_service": "2026-09-28",
+    "narrative": "",
+    "documents": [
+      "discharge_summary.pdf",
+      "itemised_bill.pdf"
+    ],
+    "lines": [
+      {
+        "code": "70553",
+        "amount": 2000
+      }
+    ]
+  },
+  {
+    "claim_id": "M5-CLM-9005",
+    "member_id": "M-4471",
+    "hospital_id": "H-207",
+    "date_of_service": "2026-04-18",
+    "narrative": "",
+    "documents": [
+      "discharge_summary.pdf",
+      "itemised_bill.pdf"
+    ],
+    "lines": [
+      {
+        "code": "47120",
+        "amount": 1500
+      }
+    ]
+  },
+  {
+    "claim_id": "M5-CLM-9006",
+    "member_id": "M-2214",
+    "hospital_id": "H-114",
+    "date_of_service": "2026-09-29",
+    "narrative": "",
+    "documents": [
+      "discharge_summary.pdf",
+      "itemised_bill.pdf"
+    ],
+    "lines": [
+      {
+        "code": "47120",
+        "amount": 1400
+      },
+      {
+        "code": "31255",
+        "amount": 300
+      },
+      {
+        "code": "62480",
+        "amount": 780
+      }
+    ]
+  }
+]
