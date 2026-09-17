@@ -2141,10 +2141,25 @@ class LiveBackend:
         messages = [{"role": "system", "content": self.system_prompt}]
         for entry in transcript:
             messages.append({"role": entry["role"], "content": entry["content"]})
-        # raw = _live_call(messages)
-        raw, usage = _live_call(messages)   # 原来是 raw = _live_call(messages)
-        self.last_usage = usage             # ← 新增
-        return _parse_move(raw)
+        raw, (ti, to) = _live_call(messages)
+        move = _try_parse_move(raw)
+        if move is None:
+            # ONE repair call, identical for every vendor. The model answered
+            # in prose (or truncated JSON); ask once for the JSON object only.
+            # Its tokens are measured and added, so the repair is paid for
+            # honestly in results.json rather than hidden.
+            messages.append({"role": "assistant", "content": raw or ""})
+            messages.append({"role": "user", "content": _REPAIR_NUDGE})
+            raw2, (ti2, to2) = _live_call(messages)
+            ti, to = ti + ti2, to + to2
+            move = _try_parse_move(raw2)
+            if move is not None:
+                move["thought"] = "[json-repair] " + str(move.get("thought", ""))
+            else:
+                move = _fallback_move("model did not return parseable JSON "
+                                      "(after one repair attempt)", raw2 or raw)
+        self.last_usage = (ti, to)
+        return move
 
     # @staticmethod
     def token_estimate(self,transcript):
@@ -2154,19 +2169,24 @@ class LiveBackend:
         return self.last_usage
 
 
-def _parse_move(text):
-    """The model must answer in JSON. Be tolerant of the ways a small model
-    wraps or truncates JSON - markdown fences, leading/trailing prose, and an
-    unterminated final object - before falling back. The whole thing is
-    wrapped so NO malformed response can ever crash a full --all run; worst
-    case it falls back to escalate and the run keeps going.
-    """
+_REPAIR_NUDGE = ("Your previous reply was not a JSON object, so it could not be "
+                 "executed. Reply again with ONLY the JSON object, in one of the "
+                 "two shapes from HOW TO ANSWER - no prose before or after it.")
+
+
+def _fallback_move(reason, text):
+    return {"final": {"decision": "escalate", "reason": reason},
+            "thought": "unparseable: %s" % (text or "")[:200]}
+
+
+def _try_parse_move(text):
+    """Return a valid move dict, or None if the reply holds none.
+    Tolerant of markdown fences, leading/trailing prose and an unterminated
+    final object. NEVER raises."""
     try:
         import re
         if not text or not text.strip():
-            return {"final": {"decision": "escalate",
-                              "reason": "model returned empty output"},
-                    "thought": "empty"}
+            return None
         raw = text.strip()
         fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
         if fence:
@@ -2190,9 +2210,16 @@ def _parse_move(text):
                     return closed
     except Exception:
         pass
-    return {"final": {"decision": "escalate",
-                      "reason": "model did not return parseable JSON"},
-            "thought": "unparseable: %s" % (text or "")[:200]}
+    return None
+
+
+def _parse_move(text):
+    """Kept for callers that want the old one-shot behaviour: a move, or the
+    escalate fallback. LiveBackend.next_move uses _try_parse_move so it can
+    attempt one repair first."""
+    move = _try_parse_move(text)
+    return move if move is not None else _fallback_move(
+        "model did not return parseable JSON", text)
 
 
 def _is_valid_move(obj):
@@ -2242,41 +2269,68 @@ def _live_call(messages):
     Everything else speaks in terms of moves and transcripts. Swapping
     vendor means rewriting this one function, and changing MODEL and
     BASE_URL in config.py. Nothing else.
+
+    HOW WE FORCE JSON, PER VENDOR - measured, not assumed:
+      openai/*     response_format json_object. Without it gpt-4o-mini
+                   answered the final step in prose (M1, 15 Sep).
+      anthropic/*  OpenRouter IGNORES json_object for Anthropic, so
+                   claude-haiku-4.5 answered the final step in prose
+                   (M6, 17 Sep: 1-case test, CODE CHECK FAIL for format).
+                   Anthropic honours an assistant PREFILL: we end the
+                   messages with an assistant turn containing "{" and the
+                   model continues the object. We put the "{" back before
+                   parsing. If a provider rejects the prefill (HTTP 400)
+                   we retry once without it and let the repair step in
+                   LiveBackend.next_move cover the rest.
+      others       json_object is sent; providers that do not support it
+                   ignore it, and the repair step covers them.
+    This is the brief's point in miniature: a vendor-specific control dies
+    when the model changes; the vendor-neutral repair step does not.
     """
     if not config.API_KEY:
         raise SystemExit(
             "\n  BACKEND is 'live' but OPENROUTER_API_KEY is not set.\n"
             "    export OPENROUTER_API_KEY='sk-or-...'\n"
             "  Or set BACKEND = 'scripted' in config.py, which is free.\n")
-    body = json.dumps({
-        "model": config.MODEL,
-        "messages": messages,
-        "temperature": 0,
-        "max_tokens": 4096,
-        # Force structured output. gpt-4o-mini otherwise tends to answer the
-        # final routing step in PROSE, which _parse_move can only fall back
-        # on -> every trial reads as escalate (0%). JSON mode makes it emit a
-        # JSON object every turn, and keeps responses short so a single call
-        # is far less likely to run past the read timeout.
-        "response_format": {"type": "json_object"},
-    }).encode()
-    # A single slow response used to kill the whole --all run: no retry, and
-    # a 60s read timeout. Retry transient network failures instead, with a
-    # longer ceiling, so one unlucky request does not waste the whole battery.
+    vendor = config.MODEL.split("/", 1)[0]
+    use_prefill = (vendor == "anthropic")
+
+    def _body(prefill):
+        msgs = list(messages)
+        if prefill:
+            msgs.append({"role": "assistant", "content": "{"})
+        body = {"model": config.MODEL, "messages": msgs,
+                "temperature": 0, "max_tokens": 4096}
+        if not prefill:
+            body["response_format"] = {"type": "json_object"}
+        return json.dumps(body).encode()
+
     last_err = None
     for attempt in range(1, 4):                 # up to 3 attempts
         req = urllib.request.Request(
             config.BASE_URL.rstrip("/") + "/chat/completions",
-            data=body,
+            data=_body(use_prefill),
             headers={"Authorization": "Bearer " + config.API_KEY,
                      "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=180) as r:
                 payload = json.load(r)
+            content = payload["choices"][0]["message"]["content"] or ""
+            if use_prefill and not content.lstrip().startswith("{"):
+                content = "{" + content
             usage = payload.get("usage", {})
-            return (payload["choices"][0]["message"]["content"],
-                    (usage.get("prompt_tokens", 0),
-                     usage.get("completion_tokens", 0)))
+            return (content, (usage.get("prompt_tokens", 0),
+                              usage.get("completion_tokens", 0)))
+        except urllib.error.HTTPError as e:
+            if use_prefill and e.code == 400:
+                print("    [live] provider rejected the assistant prefill - "
+                      "retrying without it")
+                use_prefill = False
+                continue
+            last_err = e
+            print("    [live] request failed (%d/3): %r - retrying..."
+                  % (attempt, e))
+            time.sleep(2 * attempt)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last_err = e
             print("    [live] request failed (%d/3): %r - retrying..."

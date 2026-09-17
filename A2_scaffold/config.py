@@ -97,8 +97,26 @@ def data_root():
 # Checked against vendor pages 28 August 2026. RE-CHECK THEM: quoting a
 # price you did not verify is the kind of thing D6 is marked on.
 # ─────────────────────────────────────────────────────────────────────
-PRICE_IN = 0.10
-PRICE_OUT = 0.40
+# Per-model list prices, US$ per MILLION tokens (input, output), read off
+# openrouter.ai model pages on 17 September 2026. The scripted backend
+# keeps the brief's cheap-tier figure. A live run prices its MEASURED
+# token counts at the list price of the model that produced them - so
+# results.json carries a real cost, not a cheap-tier estimate. A model
+# missing from this table falls back to the cheap tier and prints a
+# warning, so a wrong price is never silent.
+CHEAP_TIER = (0.10, 0.40)
+MODEL_PRICES = {
+    "openai/gpt-4o-mini":               (0.15, 0.60),
+    "meta-llama/llama-3.1-8b-instruct": (0.02, 0.04),
+    "qwen/qwen-2.5-7b-instruct":        (0.10, 0.20),
+    "google/gemini-2.5-flash-lite":     (0.10, 0.40),
+    "anthropic/claude-haiku-4.5":       (1.00, 5.00),
+    "anthropic/claude-3.5-haiku":       (0.80, 4.00),
+}
+if BACKEND == "live" and MODEL not in MODEL_PRICES:
+    print("  !! no list price for %r in config.MODEL_PRICES - costing at the "
+          "cheap tier (%.2f / %.2f). Add it before you quote a cost." % ((MODEL,) + CHEAP_TIER))
+PRICE_IN, PRICE_OUT = MODEL_PRICES.get(MODEL, CHEAP_TIER) if BACKEND == "live" else CHEAP_TIER
 
 
 def _stale_bytecode_warning():
