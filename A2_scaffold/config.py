@@ -110,6 +110,7 @@ MODEL_PRICES = {
     "meta-llama/llama-3.1-8b-instruct": (0.02, 0.04),
     "qwen/qwen-2.5-7b-instruct":        (0.10, 0.20),
     "google/gemini-2.5-flash-lite":     (0.10, 0.40),
+    "deepseek/deepseek-chat":           (0.26, 1.03),   # DeepSeek V3, M5 (gemini-flash-1.5 has no endpoint)
     "anthropic/claude-haiku-4.5":       (1.00, 5.00),
     "anthropic/claude-3.5-haiku":       (0.80, 4.00),
 }
