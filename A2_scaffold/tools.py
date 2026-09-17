@@ -50,6 +50,7 @@ against no policy at all.
 ====================================================================
 """
 import json
+import re
 import os
 
 import config
@@ -327,8 +328,33 @@ def get_claim(claim_id):
     """
     for c in _load("A", "claims"):
         if c["claim_id"] == claim_id:
-            return c
+            row = dict(c)
+            row["missing_documents"] = _missing_documents(c)
+            return row
     return None
+
+
+def _norm_doc(name):
+    """'itemised_bill.pdf' and 'itemised_bill' are the same document."""
+    return re.sub(r"\.(pdf|jpg|jpeg|png)$", "", str(name).strip().lower())
+
+
+def _missing_documents(claim):
+    """v2 POKA-YOKE. The insurer's document rule (required_documents.json)
+    is applied IN CODE and returned with the claim, so the model never has
+    to compare file names itself. An empty list means every required
+    document is attached. Each entry names the document AND the line it
+    belongs to - exactly what the routing table says the record must carry.
+    """
+    required = {r["procedure_code"]: r["document"]
+                for r in _load("A", "required_documents")}
+    have = {_norm_doc(d) for d in claim.get("documents", [])}
+    out = []
+    for line in claim.get("lines", []):
+        doc = required.get(line["code"])
+        if doc and _norm_doc(doc) not in have:
+            out.append({"document": doc, "for_line": line["code"]})
+    return out
 
 
 def lookup_policy(member_id):
@@ -365,7 +391,10 @@ def lookup_policy(member_id):
               if x["policy_id"] == m["policy_id"]), None)
     if p is None:
         return None
-    return {"member": m, "policy": p,
+    # v2 RETURN SHAPE: the member row (name, join_date) carries no decision
+    # information - the descriptor said so - so it is no longer re-sent on
+    # every later turn. member_id stays so the record can cite it.
+    return {"member_id": m["member_id"], "policy": p,
             "remaining": p["annual_limit"] - p["used_to_date"]}
 
 
@@ -497,13 +526,17 @@ def check_duplicate_claim(member_id, hospital_id, date_of_service, lines):
     near-misses are in the data deliberately, to make that testable.
     """
     def norm(ls):
-        return sorted((l["code"], l["amount"]) for l in ls)
+        return sorted((str(l["code"]), float(l["amount"])) for l in ls)
     for d in _load("A", "decided_claims"):
         if (d["member_id"] == member_id
                 and d["hospital_id"] == hospital_id
                 and d["date_of_service"] == date_of_service
                 and norm(d["lines"]) == norm(lines)):
-            return d
+            # v2: return what the record must cite, not the raw history row.
+            return {"duplicate_of": d["claim_id"], "decision": d["decision"],
+                    "decided_on": d["decided_on"],
+                    "matched_on": ["member_id", "hospital_id",
+                                   "date_of_service", "lines"]}
     return None
 
 
@@ -527,9 +560,30 @@ def issue_decision_letter(claim_id, decision, lines_resolved, approved_total,
     many lines it actually disposed of, which makes "I only checked the
     first line" visible in the record instead of invisible.
     """
+    # v2 POKA-YOKE. `decision` is a closed set, and an escalation is NOT a
+    # letter to the member - it goes to a human. A typo'd or wrong decision
+    # is refused here, in code, instead of being recorded and discovered
+    # at marking. The refusal is an observation, not an exception, so the
+    # run continues and the model can correct itself.
+    if decision not in SENDABLE_DECISIONS:
+        return {"sent": False,
+                "error": "decision must be one of %s; got %r. An escalation is "
+                         "not sent to the member - conclude with decision "
+                         "'escalate', a single trigger and escalate_to instead."
+                         % (sorted(SENDABLE_DECISIONS), decision)}
+    try:
+        lines_resolved = int(lines_resolved)
+        approved_total = int(approved_total)
+        refused_total = int(refused_total or 0)
+    except (TypeError, ValueError):
+        return {"sent": False, "error": "lines_resolved, approved_total and "
+                "refused_total must be integers"}
     return {"sent": True, "claim_id": claim_id, "decision": decision,
             "lines_resolved": lines_resolved,
             "approved_total": approved_total, "refused_total": refused_total}
+
+
+SENDABLE_DECISIONS = {"approve_in_principle", "request_document"}
 
 
 # =====================================================================
@@ -642,92 +696,142 @@ DESCRIPTORS = {
                    "some referrals and not on others.",
     },
 
-    # ---- Problem A -------------------------------------------------
+    # ---- Problem A (v2 descriptors: six fields, size-bounded returns) ----
     "get_claim": {
         "name": "get_claim",
-        "purpose": "Fetch the claim you have been asked to decide.",
-        "when": "Turn 1, alone. Everything else needs the member, hospital "
+        "signature": "get_claim(claim_id: str) -> Claim",
+        "purpose": "Fetch the claim you have been asked to decide, with the "
+                   "document check already done.",
+        "when": "Turn 1, ALONE. Every other call needs the member, hospital "
                 "and line items it returns.",
         "args": {"claim_id": "str, the case id you were given"},
         "returns": "{claim_id, member_id, hospital_id, date_of_service, "
-                   "narrative, documents[], lines[{code, amount}]}",
-        "failure": "Returns None when no claim has that id - a broken case. "
-                   "NOTE lines is a LIST: every line needs its own coverage "
-                   "check and its own disposition.",
+                   "narrative, documents[], lines[{code, amount}], "
+                   "missing_documents[{document, for_line}]}",
+        "size": "one record; at most 6 lines; ~120 tokens",
+        "failure": "None when no claim has that id - a broken case, say so. "
+                   "missing_documents NOT empty -> request_document naming that "
+                   "document and line; do not price the lines first.",
+        "irreversible": "No",
     },
     "lookup_policy": {
         "name": "lookup_policy",
-        "purpose": "The member's policy, and how much of the annual limit is "
-                   "left.",
-        "when": "After get_claim. Independent of the coverage checks and the "
-                "hospital lookup, so all of them fit in one turn.",
+        "signature": "lookup_policy(member_id: str) -> PolicyView",
+        "purpose": "The member's policy: status, cover dates, headroom, "
+                   "exclusions.",
+        "when": "After get_claim; independent of the coverage checks and the "
+                "hospital lookup, so all of them fit in ONE turn.",
         "args": {"member_id": "str, from the claim"},
-        "returns": "{member: {...}, policy: {status, start_date, end_date, "
-                   "annual_limit, used_to_date, exclusions[]}, remaining: int}",
-        "failure": "Returns None when the member or policy does not exist. "
-                   "USE `remaining`, not annual_limit - it is the limit minus "
-                   "what is already spent. Three separate escalation reasons "
-                   "live here: lapsed status, a date of service outside "
-                   "start_date..end_date EVEN IF status is active, and lines "
-                   "exceeding `remaining`.",
+        "returns": "{member_id, policy: {policy_id, status, start_date, "
+                   "end_date, annual_limit, used_to_date, exclusions[{code, "
+                   "rule}]}, remaining: int}",
+        "size": "one record; ~90 tokens",
+        "failure": "None when the member or policy does not exist. Triggers "
+                   "here, in order: status lapsed -> policy_lapsed; "
+                   "date_of_service outside start_date..end_date (even if "
+                   "active) -> outside_policy_dates; line amounts together > "
+                   "remaining -> annual_limit_exceeded (never test against "
+                   "annual_limit).",
+        "irreversible": "No",
     },
     "lookup_hospital": {
         "name": "lookup_hospital",
+        "signature": "lookup_hospital(hospital_id: str) -> Hospital",
         "purpose": "Whether the hospital is on the insurer's panel.",
-        "when": "After get_claim, alongside the other independent lookups.",
+        "when": "After get_claim, in the same turn as lookup_policy and the "
+                "coverage checks.",
         "args": {"hospital_id": "str, from the claim"},
-        "returns": "{hospital_id, name, panel (bool), country}",
-        "failure": "Returns None when the hospital does not exist. panel "
-                   "false does NOT decide the claim - it changes what the "
-                   "record must SAY, not what the decision is. Record it "
-                   "either way.",
+        "returns": "{hospital_id, name, panel: bool, country}",
+        "size": "one record; ~25 tokens",
+        "failure": "None when the hospital does not exist. panel=false does "
+                   "NOT change the decision - it changes what the reason must "
+                   "say. Record it either way.",
+        "irreversible": "No",
     },
     "check_coverage": {
         "name": "check_coverage",
-        "purpose": "Whether ONE procedure code is payable under ONE policy.",
-        "when": "ONCE PER LINE. A three-line claim needs three calls, and "
-                "they are independent, so they belong in the same turn.",
+        "signature": "check_coverage(code: str, policy_id: str) -> Coverage",
+        "purpose": "Whether ONE procedure code is payable under ONE policy, "
+                   "and whether it needs a pre-authorisation.",
+        "when": "ONCE PER LINE; all lines independent, so one turn. Needs "
+                "policy_id from lookup_policy.",
         "args": {"code": "str, one line's procedure code",
-                 "policy_id": "str, REQUIRED, from lookup_policy"},
-        "returns": "{code, description, requires_preauth (bool), excluded "
-                   "(bool), exclusion_rule (str or None)}",
-        "failure": "Returns None when the code or policy does not exist. TWO "
-                   "FIELDS DRIVE WHAT HAPPENS NEXT: requires_preauth true "
-                   "means look for an approval, false means do not. excluded "
-                   "refuses THAT LINE, not the claim - cite exclusion_rule by "
-                   "name, and keep deciding the other lines.",
+                 "policy_id": "str, REQUIRED - the member's policy"},
+        "returns": "{code, description, requires_preauth: bool, excluded: "
+                   "bool, exclusion_rule: str|null}",
+        "size": "one record; ~35 tokens",
+        "failure": "None when the code or policy does not exist. "
+                   "requires_preauth=true -> get_preauthorisation for THAT line "
+                   "only. excluded=true refuses THAT LINE (cite exclusion_rule, "
+                   "amount to refused_total); the claim is still approved.",
+        "irreversible": "No",
+    },
+    "get_preauthorisation": {
+        "name": "get_preauthorisation",
+        "signature": "get_preauthorisation(member_id: str, procedure_code: str, "
+                     "date_of_service: str) -> Preauth | None",
+        "purpose": "Find a pre-authorisation valid for this member, this "
+                   "procedure, ON the date of service.",
+        "when": "ONLY after check_coverage returned requires_preauth=true for "
+                "that line. Never for other lines.",
+        "args": {"member_id": "str, from the claim",
+                 "procedure_code": "str, the line's code",
+                 "date_of_service": "str YYYY-MM-DD, from the claim"},
+        "returns": "{preauth_id, member_id, procedure_code, valid_from, "
+                   "valid_to} or None",
+        "size": "one record; ~40 tokens",
+        "failure": "None when no approval exists OR it expired before the "
+                   "date of service. None = EVIDENCE MISSING, not 'not covered' "
+                   "-> request_document, missing = {item: 'pre-authorisation "
+                   "reference', for_line, must_be_valid_on}.",
+        "irreversible": "No",
     },
     "check_duplicate_claim": {
         "name": "check_duplicate_claim",
-        "purpose": "Whether this episode has already been decided.",
-        "when": "Before issuing any decision.",
+        "signature": "check_duplicate_claim(member_id: str, hospital_id: str, "
+                     "date_of_service: str, lines: list) -> Match | None",
+        "purpose": "Whether this episode was ALREADY decided (a resubmission "
+                   "under a new claim id).",
+        "when": "Once, any time after get_claim (it needs only claim fields), "
+                "and always BEFORE issue_decision_letter.",
         "args": {"member_id": "str, from the claim",
                  "hospital_id": "str, from the claim",
                  "date_of_service": "str, from the claim",
-                 "lines": "the claim's lines list, unchanged"},
-        "returns": "the prior decided claim, or None",
-        "failure": "Returns None when nothing matches - the normal case, "
-                   "carry on. MATCH ON ALL FOUR FACTS. The claim id is NOT "
-                   "one of them: a resubmission arrives with a new id. The "
-                   "history contains near-misses that differ on exactly one "
-                   "fact each, so any shortcut match wrongly escalates a "
-                   "perfectly good claim.",
+                 "lines": "the claim's lines list, passed through unchanged"},
+        "returns": "{duplicate_of, decision, decided_on, matched_on[4]} or "
+                   "None",
+        "size": "one record; ~40 tokens",
+        "failure": "None = no prior decision, carry on. A match -> escalate, "
+                   "trigger duplicate_claim, citing duplicate_of and the four "
+                   "matched facts. Matching is done in code on all four facts.",
+        "irreversible": "No",
     },
     "issue_decision_letter": {
         "name": "issue_decision_letter",
-        "purpose": "Send the decision to the member. THE IRREVERSIBLE STEP.",
-        "when": "Last, once every line has a disposition.",
+        "signature": "issue_decision_letter(claim_id: str, decision: "
+                     "Literal['approve_in_principle','request_document'], "
+                     "lines_resolved: int, approved_total: int, "
+                     "refused_total: int = 0) -> Confirmation",
+        "purpose": "Record the first response to the member. THE IRREVERSIBLE "
+                   "STEP.",
+        "when": "Last, exactly once, for approve_in_principle or "
+                "request_document, after the duplicate check. NEVER for "
+                "escalate - that goes to a human, not the member.",
         "args": {"claim_id": "str, the case id",
-                 "decision": "str, one of the three outcomes",
-                 "lines_resolved": "int, how many lines you actually decided",
-                 "approved_total": "int, dollars approved",
-                 "refused_total": "int, dollars refused (default 0)"},
+                 "decision": "'approve_in_principle' | 'request_document' "
+                             "(anything else is refused)",
+                 "lines_resolved": "int = number of lines on the claim",
+                 "approved_total": "int, sum of covered line amounts (0 for "
+                                   "a request)",
+                 "refused_total": "int, sum of excluded line amounts"},
         "returns": "{sent: true, claim_id, decision, lines_resolved, "
-                   "approved_total, refused_total}",
-        "failure": "This call is GATED and may be held for human approval. "
-                   "If held, that is the correct outcome, not an error. "
-                   "lines_resolved must equal the number of lines on the "
-                   "claim - if it does not, you have not finished.",
+                   "approved_total, refused_total} or {sent: false, error}",
+        "size": "one record; ~30 tokens",
+        "failure": "GATED: may be held for human approval (correct outcome, "
+                   "not an error). sent=false + error for any other decision "
+                   "or non-integer totals; nothing is recorded then.",
+        "irreversible": "YES - covered by the autonomy gate in guardrails.py "
+                        "(AUTONOMY=confirm holds it for a human).",
     },
 
     "get_clinic_slots": {
@@ -752,26 +856,6 @@ DESCRIPTORS = {
                    "different fact from a slot not existing, and neither is a "
                    "reason to book outside the band.",
     },
-    "get_preauthorisation": {
-        "name": "get_preauthorisation",
-        "purpose": "Find a pre-authorisation covering one member for one "
-                   "procedure on one date.",
-        "when": "ONLY when check_coverage said requires_preauth is true. "
-                "Calling it for every line means you did not read the flag.",
-        "args": {
-            "member_id": "str, from the claim",
-            "procedure_code": "str, the line's code",
-            "date_of_service": "str date, from the claim - the approval must "
-                               "be valid ON this date",
-        },
-        "returns": "{preauth_id, member_id, procedure_code, valid_from, "
-                   "valid_to} or None",
-        "failure": "Returns None when no approval exists OR when one exists "
-                   "but had expired before the date of service. NONE DOES NOT "
-                   "MEAN UNCOVERED. It means the evidence is missing, which is "
-                   "a REQUEST for the reference - naming the code and the date "
-                   "- not a refusal. Deciding otherwise fails the case.",
-    },
 }
 
 
@@ -789,4 +873,15 @@ def call(problem, name, args):
         raise KeyError(
             "No tool named %r for Problem %s. Available: %s"
             % (name, problem, ", ".join(sorted(table))))
-    return table[name](**args)
+    try:
+        return table[name](**(args or {}))
+    except (TypeError, ValueError, KeyError, AttributeError) as e:
+        # v2: a wrong argument name/shape used to raise out of the loop and
+        # kill an entire --all battery (a cost you only notice at the end).
+        # Now it is an error observation that names the correct signature,
+        # so the model can retry and the run is graded on its outcome. The
+        # unknown-tool KeyError above is deliberately NOT caught here.
+        import inspect
+        sig = str(inspect.signature(table[name]))
+        return {"error": "bad arguments for %s%s: %s: %s"
+                         % (name, sig, type(e).__name__, e)}
