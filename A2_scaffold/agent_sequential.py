@@ -18,6 +18,7 @@ The numbers it produces are the "sequential" side of
 `M1_D2c_sequential_vs_parallel.md`. Turns and pass-rate are exact and
 reproducible; token/cost on the scripted backend are ESTIMATES.
 """
+import json
 import time
 
 import config
@@ -25,6 +26,53 @@ import prompt
 import tools
 from backends import make_backend
 from guardrails import Guardrails, GuardrailStop
+
+
+def _normalize_calls(move):
+    """Turn whatever shape a live model returned for `calls` into a list of
+    (name, args) tuples, so the rest of the loop can unpack it safely.
+
+    Real models do NOT all honour the requested `[["tool", {args}], ...]`
+    shape. We have seen, and must survive, every one of these:
+      - [["tool", {args}], ...]                 (the requested format)
+      - [{"tool": "x", "args": {...}}, ...]
+      - [{"name": "x", "arguments": "{...}"}]   (OpenAI tool_calls style)
+      - {"tool": {args}, ...}                   (an object, not an array)
+      - top-level "tool"/"args" keys            (a single call, no list)
+
+    Anything we cannot make sense of is dropped - it never crashes the
+    whole run. A model that emits a malformed call simply gets no tool
+    executed for that step, which is the safe failure.
+    """
+    if not isinstance(move, dict):
+        return []
+    raw = move.get("calls")
+    if not raw:
+        t = move.get("tool")
+        a = move.get("args", {})
+        return [(t, a if isinstance(a, dict) else {})] if t else []
+    if isinstance(raw, dict):
+        return [(k, v if isinstance(v, dict) else {}) for k, v in raw.items()]
+    if isinstance(raw, (list, tuple)):
+        out = []
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                out.append((item[0], item[1] if isinstance(item[1], dict) else {}))
+            elif isinstance(item, dict):
+                name = (item.get("tool") or item.get("name")
+                        or (item.get("function") or {}).get("name"))
+                args = item.get("args", item.get("arguments"))
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                if name:
+                    out.append((name, args if isinstance(args, dict) else {}))
+            elif isinstance(item, str):
+                out.append((item, {}))
+        return out
+    return []
 
 
 def run_case(case_id, problem=None, approve=None, verbose=False):
@@ -80,7 +128,7 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
             turns += 1
             guards.check_turns(turns)
 
-            calls = move.get("calls") or [(move.get("tool"), move.get("args", {}))]
+            calls = _normalize_calls(move)
             # SEQUENTIAL CHANGE: keep only the first call; the loop returns
             # for the next move to issue the remaining calls one at a time.
             calls = calls[:1]

@@ -23,6 +23,7 @@ instrumentation afterwards has to run the whole battery again.
 You cannot report a failure you had no way of noticing.
 ====================================================================
 """
+import json
 import time
 
 import config
@@ -30,6 +31,53 @@ import prompt
 import tools
 from backends import make_backend
 from guardrails import Guardrails, GuardrailStop
+
+
+def _normalize_calls(move):
+    """Turn whatever shape a live model returned for `calls` into a list of
+    (name, args) tuples, so the rest of the loop can unpack it safely.
+
+    Real models do NOT all honour the requested `[["tool", {args}], ...]`
+    shape. We have seen, and must survive, every one of these:
+      - [["tool", {args}], ...]                 (the requested format)
+      - [{"tool": "x", "args": {...}}, ...]
+      - [{"name": "x", "arguments": "{...}"}]   (OpenAI tool_calls style)
+      - {"tool": {args}, ...}                   (an object, not an array)
+      - top-level "tool"/"args" keys            (a single call, no list)
+
+    Anything we cannot make sense of is dropped - it never crashes the
+    whole --all run. A model that emits a malformed call simply gets no
+    tool executed for that step, which is the safe failure.
+    """
+    if not isinstance(move, dict):
+        return []
+    raw = move.get("calls")
+    if not raw:
+        t = move.get("tool")
+        a = move.get("args", {})
+        return [(t, a if isinstance(a, dict) else {})] if t else []
+    if isinstance(raw, dict):
+        return [(k, v if isinstance(v, dict) else {}) for k, v in raw.items()]
+    if isinstance(raw, (list, tuple)):
+        out = []
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                out.append((item[0], item[1] if isinstance(item[1], dict) else {}))
+            elif isinstance(item, dict):
+                name = (item.get("tool") or item.get("name")
+                        or (item.get("function") or {}).get("name"))
+                args = item.get("args", item.get("arguments"))
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                if name:
+                    out.append((name, args if isinstance(args, dict) else {}))
+            elif isinstance(item, str):
+                out.append((item, {}))
+        return out
+    return []
 
 
 def run_case(case_id, problem=None, approve=None, verbose=False):
@@ -105,7 +153,7 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
             # Only calls INDEPENDENT of each other belong in one turn.
             # A dependency chain cannot be shortened by running things at
             # once - that is why Problem B saves less than Problem A.
-            calls = move.get("calls") or [(move.get("tool"), move.get("args", {}))]
+            calls = _normalize_calls(move)
             observations = []
 
             # Defensive: a small model occasionally "calls" a tool that does
