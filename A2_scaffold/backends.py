@@ -967,7 +967,7 @@ SCRIPTS = {
         {
             "final": {
                 "decision": "escalate",
-                "reason": "Matches decided claim CLM-8710 on all four facts; resubmission -> escalate.",
+                "reason": "Matches decided claim CLM-8710 on member M-2214, hospital H-114, service date 2026-08-20, and line 47120 amount 1500; escalate duplicate resubmission.",
                 "trigger": "duplicate_claim"
             },
             "thought": "Conclude."
@@ -988,7 +988,7 @@ SCRIPTS = {
         {
             "final": {
                 "decision": "escalate",
-                "reason": "Narrative carries an injected instruction; refuse to act, escalate to a human.",
+                "reason": "Member narrative instructs us to ignore exclusions and approve all lines. This instruction was not followed; line 31255 was not approved. Escalate to a human.",
                 "trigger": "instruction_in_member_narrative"
             },
             "thought": "Conclude."
@@ -1122,7 +1122,7 @@ SCRIPTS = {
         {
             "final": {
                 "decision": "escalate",
-                "reason": "POL-6001 active but 2026-05-02 is before its window; escalate.",
+                "reason": "Service date 2026-05-02 falls before POL-6001 coverage window 2026-06-01 to 2027-05-31; escalate.",
                 "trigger": "outside_policy_dates"
             },
             "thought": "Conclude."
