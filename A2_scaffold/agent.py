@@ -137,13 +137,30 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
             tokens_in, tokens_out = tokens_in + ti, tokens_out + to
             guards.check_budget(tokens_in + tokens_out)
 
+            # A live model can return ANYTHING. From here down `move` is
+            # treated as untrusted input: a shape we did not ask for must
+            # end THIS run safely and never kill the whole --all battery.
+            if not isinstance(move, dict):
+                record = {"decision": "escalate",
+                          "reason": "model returned a non-object move: %r" % (move,)}
+                break
+
             if verbose:
                 label = ("conclude" if "final" in move else "turn %d" % (turns + 1))
-                print("  %-9s · %s" % (label, move.get("thought", "")[:88]))
+                print("  %-9s · %s" % (label, str(move.get("thought", ""))[:88]))
 
             # ---- conclude -------------------------------------------
             if "final" in move:
-                record = dict(move["final"])
+                final = move["final"]
+                # Seen from llama-3.1-8b: {"final": null} and {"final": "text"}.
+                # dict(None) raises "'NoneType' object is not iterable" and
+                # killed the WHOLE --all run. Conclude safely instead.
+                if isinstance(final, dict):
+                    record = dict(final)
+                else:
+                    record = {"decision": "escalate",
+                              "reason": "model returned a malformed final block: %r"
+                                        % (final,)}
                 break
 
             # ---- act: one turn may carry SEVERAL calls ---------------
