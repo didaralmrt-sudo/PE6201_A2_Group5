@@ -28,7 +28,7 @@ Layer 3 is fixed in all the models under consideration and does not impact the m
 
 Five models are considered, one per member, all tested on the same 108 trials with the same v2 prompt. The metric "cost per successful task" includes contributions from layer 1 and layer 2.
 
-| Model | Tier | Pass rate | Layer 1 / run | Layer 2 / claim | Cost per successful task | Monthly @ 8,000 |
+| Model | Tier | Pass rate | Layer 1 / run | Layer 2 / claim | Cost per successful task | Monthly @ 8,000 (layers 1 + 2) |
 |---|---|---|---|---|---|---|
 | anthropic/claude-haiku-4.5 | mid | 91.7% (99/108) | \$0.0151 | \$0.633 | \$0.648 | \$5,187 |
 | deepseek/deepseek-chat | cheap | 78.7% (85/108) | \$0.0028 | \$1.619 | \$1.621 | \$12,971 |
@@ -36,6 +36,10 @@ Five models are considered, one per member, all tested on the same 108 trials wi
 | qwen/qwen-2.5-7b-instruct | cheap | 40.7% (44/108) | \$0.0010 | \$4.504 | \$4.505 | \$36,038 |
 | meta-llama/llama-3.1-8b | cheap | 19.4% (21/108) | \$0.0002 | \$6.122 | \$6.122 | \$48,979 |
 | *no agent — a person reads every claim* | — | — | — | \$7.60 | \$7.60 | \$60,800 |
+
+Each total is computed from unrounded figures, so adding the two printed columns can differ from it by \$0.001 on two rows.
+
+Layer 3 is not in that last column. It adds a flat US\$150 a month to every row, so the full monthly cost of the model we ship is about **US\$5,337**. We compare on layers 1 and 2 because the US\$150 is identical for every model and cancels out of the comparison.
 
 ### Two takeaways from the ledger
 
@@ -76,14 +80,14 @@ There is one more limitation. The 5.6 percentage point improvement has been meas
 
 Our pass rate is an estimate, so we show a range rather than one number: cost per successful task at ±10 percentage points around the measured 91.7%, with layer 1 held at its measured value.
 
-| Pass rate | Cost per successful task | Monthly @ 8,000 |
+| Pass rate | Cost per successful task | Monthly @ 8,000 (layers 1 + 2) |
 |---|---|---|
 | 81.7% | \$1.408 | \$11,267 |
 | 86.7% | \$1.028 | \$8,227 |
 | **91.7% (measured)** | **\$0.648** | **\$5,187** |
 | 96.7% | \$0.268 | \$2,147 |
 
-Every 5 points of accuracy is worth \$0.38 a claim, or \$3,040 a month. A 10-point swing moves the bill by more than the entire inference spend of any model in the table.
+The same flat US\$150 of layer 3 sits on top of every row here too. Every 5 points of accuracy is worth \$0.38 a claim, or \$3,040 a month. A 10-point swing moves the bill by more than the entire inference spend of any model in the table.
 
 **Does the conclusion survive the range? Yes.** Even at the bottom of it, 81.7%, haiku costs \$1.41 per successful task — still below DeepSeek's measured \$1.62. Haiku is the cheapest option at every row.
 
