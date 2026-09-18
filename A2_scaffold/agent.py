@@ -161,7 +161,12 @@ def run_case(case_id, problem=None, approve=None, verbose=False):
             # an action). tools.call would raise KeyError and kill the WHOLE
             # --all run. Conclude safely instead.
             known = set(tools.REGISTRY.get(problem, {}))
-            bad = [n for n, _ in calls if n not in known]
+            # A tiny model sometimes emits a tool NAME that is not even a
+            # string (a nested list, a dict). `n not in known` on a set then
+            # raises "unhashable type: 'list'" and kills the WHOLE --all run.
+            # Treat any non-string or unknown name as a bad call and conclude
+            # safely instead of crashing the battery.
+            bad = [n for n, _ in calls if not isinstance(n, str) or n not in known]
             if bad:
                 record = {"decision": "escalate",
                           "reason": "model requested unknown tool(s): %s"
