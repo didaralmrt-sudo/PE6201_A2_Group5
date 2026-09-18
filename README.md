@@ -15,10 +15,11 @@ six-member live battery, the team report and the self-assessment.
 ## 1. Prerequisites
 
 - **Python 3.10+** (we developed on 3.13). The scaffold uses **only the Python
-  standard library** — there is nothing to `pip install`.
-- **Live mode only**: an OpenRouter API key in the environment
-  (`OPENROUTER_API_KEY`). Scripted mode (the default, and the one a clean clone
-  must reproduce) needs no key and costs nothing.
+  standard library** — there is **nothing to `pip install`**.
+- **Live mode only** (optional, costs money): an OpenRouter API key in the
+  environment variable `OPENROUTER_API_KEY`. The **scripted** mode — which is the
+  default and the one a clean clone must reproduce — needs **no key** and makes
+  **no network call**.
 
 ```bash
 # Linux / macOS
@@ -28,82 +29,178 @@ export OPENROUTER_API_KEY="sk-or-..."
 $env:OPENROUTER_API_KEY="sk-or-..."
 ```
 
+> **A marker clones this repository and runs it scripted. That must work with zero
+> setup.** If it does not, Technical Execution (D5a) is capped. Test it the way a
+> marker will: clone into a fresh folder and run there.
+
 ---
 
-## 2. Clone and run (a stranger's path)
+## 2. Quick start — clone and run (the scripted battery)
 
 ```bash
 git clone https://github.com/didaralmrt-sudo/PE6201_A2_Group5.git
 cd PE6201_A2_Group5
-
-# Reproduce the scripted evaluation set (default backend, no API key needed)
-python A2_scaffold/run_eval.py
+cd A2_scaffold
+python run_eval.py
 ```
 
-Expected output: the scripted backend replays fixed answers and the run ends at
-**100% pass (48 cases, 108/108 trials)**. The scripted backend never reads the
-prompt, so this number is stable on any machine.
+Expected output (verified on a clean machine):
 
-> On Windows: do **not** create result-file names containing a colon (`:`) — it
-> is a reserved character and will make the repo un-cloneable for other Windows
-> users. Model names in result files use a hyphen instead, e.g.
-> `results_live_M4_qwen-qwen-2.5-7b-instruct.json`.
+```
+BACKEND=scripted  FREE, deterministic  |  PROBLEM=A  |  model=(no model)  |
+ cap=8 turns  |  autonomy=confirm
+
+  Running the 48 SCRIPTED case(s): CLM-8842, CLM-8850, ...
+  ...
+====================================================================
+  RESULTS   108 of 108 trials passed   (100%)
+====================================================================
+  trials              108
+  median turns        2.0
+  worst case turns    5
+  hit the step cap    0
+  total cost          US$0.0346   (scripted backend)
+
+  Every trial passed the code check.
+  That is HALF the check. Work through the judgement queue
+  before you believe this number.
+```
+
+- **48 cases, 108/108 trials pass (100%).** The scripted backend replays fixed
+  answers, so this number is **deterministic and identical on any machine** — it
+  does not depend on a model, a key, or the network.
+- The scripted backend **never reads the prompt**, so a prompt change cannot make
+  the scripted number move. (This is what makes the run reproducible for D5a.)
+
+> **Reading the output.** The run prints two checks:
+> 1. **CODE CHECK** — automated; every trial must pass. This is the `108/108`.
+> 2. **JUDGEMENT CHECK** — a short queue of items a *human* reads per case (e.g.
+>    "did the reason capture the missing document?"). It is printed for single-case
+>    runs and is **not** a failure when you see it listed.
 
 ---
 
-## 3. Switching to live mode (costs money)
+## 3. Running a single case (verbose)
 
-Edit `A2_scaffold/config.py`:
+```bash
+python run_eval.py CLM-8842
+```
+
+This runs one case and prints every turn, the decision record, the `CODE CHECK`
+result, and the `JUDGEMENT CHECK` queue for that case. Useful for grading an
+individual scenario or debugging.
+
+---
+
+## 4. Optional — live mode (costs money)
+
+Live mode calls a real model through OpenRouter and is billed to your key. It is
+only needed for the model battery (D5b), not for the reproducible run.
+
+1. Set the key (see §1).
+2. Edit `A2_scaffold/config.py`:
 
 ```python
 BACKEND = "live"                       # "scripted" | "live"
 MODEL   = "openai/gpt-4o-mini"         # any OpenRouter model id
 ```
 
-Then run the same entry point; live calls hit OpenRouter and are billed to your
-key. For running the whole battery (or letting the notebook manage the model),
-use `A2_live_battery.ipynb` — its setup cell clones/pulls the latest scaffold
-and runs every case for the chosen model.
+3. Run the same entry point:
 
-Optional: point the data directory elsewhere with `A2_DATA=/path/to/data`.
+```bash
+python run_eval.py            # live over the scripted case set
+python run_eval.py --all      # live over every case in the work queue
+```
+
+> **Do not commit `config.py` with `BACKEND="live"`.** The submitted default must
+> stay `BACKEND="scripted"` so a clean clone runs for free. Revert it before
+> committing (`git checkout -- A2_scaffold/config.py`).
+
+For running the whole six-member battery (or letting a notebook manage the model),
+use `A2_live_battery.ipynb` — its setup cell pulls the latest scaffold and runs
+every case for the chosen model.
+
+Optional: point the data directory elsewhere with `A2_DATA=/path/to/A2_reference_data`.
 
 ---
 
-## 4. Repository layout
+## 5. Data sanity check
+
+Before trusting the numbers, confirm the reference data is internally consistent:
+
+```bash
+cd A2_reference_data
+python check_my_data.py
+```
+
+Expected: a per-table breakdown ending in `Your data hangs together.`
+
+---
+
+## 6. Repository layout
 
 ```
-A2_scaffold/            the agent: agent.py, tools.py, guardrails.py,
-                        prompt.py, backends.py (SCRIPTS + replay),
-                        harness.py, run_eval.py, config.py
-A2_reference_data/      claims.json, expected_outcomes_A.json,
-                        check_my_data.py, policies/hospitals/... fixtures
-M5_Cases/  M6_Cases/   per-member case + key material
-appendix/               per-member reports & evidence (M1–M6)
-results_live_*.json    each member's live-battery run (on OpenRouter)
-TEAM_REPORT.md          the six-section team report (≤2000 words)
-SELF_ASSESSMENT.md      per-member model, pass rate, cases
-CONTRIBUTIONS.md        member → module mapping
+A2_scaffold/             the agent code
+    run_eval.py          ENTRY POINT — a marker runs this (scripted by default)
+    agent.py             ReAct control loop (parallel & sequential runners)
+    tools.py             the 7-tool contract + Problem A/B descriptors
+    guardrails.py        step cap / token budget / duplicate / autonomy gate
+    prompt.py            system-prompt builder + audit()
+    backends.py          SCRIPTS (fixed answers) + live backend
+    harness.py           case loader, runner, reporter
+    config.py            the only file that knows which model (D5)
+A2_reference_data/       fixtures (next to the scaffold)
+    data_A/              claims.json, members.json, policies.json,
+                         preauthorisations.json, procedures.json,
+                         hospitals.json, required_documents.json,
+                         decided_claims.json
+    data_B/              referral-coordination fixtures
+    expected_outcomes_A.json / expected_outcomes_B.json
+    check_my_data.py     consistency check
+    data_dictionary.json
+M5_Cases/ M6_Cases/   per-member case + key material
+                         (M1–M4 case inputs are merged into A2_reference_data)
+appendix/                per-member reports & evidence (M1–M6)
+results_live_*.json     each member's live-battery run (on OpenRouter)
+TEAM_REPORT.md           the six-section team report (≤2000 words)
+SELF_ASSESSMENT.md      per-member model, live pass rate, case count
+CONTRIBUTIONS.md         member → module / commit mapping
 video/                  where the demo video is submitted (see video/README.md)
 ```
 
----
-
-## 5. Key commands
-
-| Goal | Command |
-|------|---------|
-| Reproduce scripted set (default) | `python A2_scaffold/run_eval.py` |
-| Run everything that is scripted | `python A2_scaffold/run_eval.py --all` |
-| Inspect the exact prompt + size | `python A2_scaffold/run_eval.py --prompt` |
-| Check data consistency | `python A2_reference_data/check_my_data.py` |
-| Run a single case (manual) | `python A2_scaffold/harness.py <CLM-ID>` |
+> **Windows filename warning.** Never create result-file names containing a colon
+> (`:`) — it is a reserved character and will make the repo un-cloneable for other
+> Windows users. Model names in result files use a hyphen instead, e.g.
+> `results_live_M4_qwen-qwen-2.5-7b-instruct.json`.
 
 ---
 
-## 6. Report & assessment
+## 7. Key commands
+
+| Goal | Command (from `A2_scaffold/`) |
+|------|-------------------------------|
+| Reproduce the scripted set (default) | `python run_eval.py` |
+| Run every case in the work queue | `python run_eval.py --all` |
+| Run one case, verbose | `python run_eval.py CLM-8842` |
+| Print the exact prompt and stop | `python run_eval.py --prompt` |
+| Check data consistency | `cd ../A2_reference_data && python check_my_data.py` |
+
+---
+
+## 8. Report & assessment
 
 - **Team report** — `TEAM_REPORT.md` (§1 Why an Agent · §2 Tool Layer ·
   §3 Evidence · §4 Cost · §5 Two Failures · §6 What We Would Not Deploy).
 - **Self-assessment** — `SELF_ASSESSMENT.md` (each member's model, live pass
   rate, case count).
-- **Contributions** — `CONTRIBUTIONS.md`.
+- **Contributions** — `CONTRIBUTIONS.md` (member → module / commit mapping).
+
+---
+
+## 9. Note on reproducibility
+
+The scripted backend is the contract with the marker: it replays `SCRIPTS` from
+`backends.py` and compares against `expected_outcomes_A.json`. Add a case by
+appending to `SCRIPTS` and to `data_A/claims.json`; the next `python run_eval.py`
+will replay it. A clean clone therefore reproduces the battery exactly, which is
+the whole point of D5a.
