@@ -148,7 +148,26 @@ def run_set(case_ids=None, problem=None, trials_for=None, verbose=False):
             continue
 
         for trial in range(1, trials_for(cid) + 1):
-            record = run_case(cid, problem=problem, verbose=verbose)
+            try:
+                record = run_case(cid, problem=problem, verbose=verbose)
+            except Exception as exc:
+                # A LOUD PER-TRIAL STOP. One bad trial - a provider 500, a
+                # timeout, a response shape no guard anticipated - used to
+                # kill the WHOLE battery and throw away every result already
+                # paid for. Record it as a failed run that NAMES the error
+                # and carry on. `decision` is deliberately "error", not
+                # "escalate", so a crash can never be graded as a pass on a
+                # negative case. KeyboardInterrupt and SystemExit are not
+                # Exceptions, so a missing API key still stops everything.
+                record = {"decision": "error",
+                          "reason": "run crashed: %s: %s"
+                                    % (type(exc).__name__, exc),
+                          "case_id": cid, "evidence": [], "turns": 0,
+                          "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0,
+                          "seconds": 0.0, "guardrails_fired": [],
+                          "stopped_by": "crashed", "backend": config.BACKEND}
+                print("    %-11s CRASHED  %s: %s"
+                      % (cid, type(exc).__name__, str(exc)[:58]))
             passed, fails = code_check(record, expected)
             results.append({"case_id": cid, "trial": trial, "passed": passed,
                             "fails": fails, "record": record,
