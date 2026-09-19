@@ -57,7 +57,7 @@ Layer 3 is not in that last column. It adds a flat US\$150 a month to every row,
 
 ### Identification of the dominating lever and arguments
 
-Overall, Lever 4 dominates the cost composition everywhere. The costs of Layer 2 are 42 times larger than those of Layer 1 in the chosen model, and Layer 2 is the only layer whose cost moves when accuracy moves. The other three levers compete over about \$0.015 per run, whereas Lever 4 moves Layer 2, which is \$0.633 per claim on Haiku and climbs towards \$7.60 as accuracy falls.
+Overall, Lever 4 dominates the cost composition everywhere. The costs of Layer 2 are 42 times larger than those of Layer 1 in the chosen model, and Layer 2 is the only layer whose cost moves when accuracy moves. The other three levers compete over about \$0.015 per run, whereas Lever 4 moves Layer 2, which is \$0.633 per claim on haiku and climbs towards \$7.60 as accuracy falls.
 
 In Layer 1, the dominating element is Lever 1, not Lever 3. As the brief warns, a large observation set compounds, whereas a large tool block grows linearly. In our case the compounding never showed up, and two facts show why:
 
@@ -72,13 +72,13 @@ The evidence is the input tokens per turn. For each haiku run we divided its inp
 
 In case of accumulating observations, one should see increasing values of the metric for longer runs. The metric does not: the figure stays flat and in fact falls slightly. That is what you see when the re-sent prefix is the bill and the observations are not.
 
-Layer 1 was purposely raised. With the Version 2 rewrite, the re-sent block got a 49% increase and resulted in a direct loss on Layer 1. In order to find out how much benefit could be expected from this increase, the model was kept constant, while both prompts were evaluated on the llama-3.1-8b model: the metric went from 13.9% to 19.4% for a gain of 5.6 percentage points. It translates into the value of \$0.42 per claim on Layer 2. Even at the Haiku price level, the additional tokens amount to \$0.0013 per run. With F = \$7.60, the trade is not a close call: the gain outweighs the extra tokens by more than 300 times.
+Layer 1 was purposely raised. With the Version 2 rewrite, the re-sent block got a 49% increase and resulted in a direct loss on Layer 1. In order to find out how much benefit could be expected from this increase, the model was kept constant, while both prompts were evaluated on the llama-3.1-8b model: the metric went from 13.9% to 19.4% for a gain of 5.6 percentage points. It translates into the value of \$0.42 per claim on Layer 2. Even at the haiku price level, the additional 766 tokens per turn, across an average of 2.8 turns per run, amount to \$0.0021 per run. With F = \$7.60, the trade is not a close call: the gain outweighs the extra tokens by about 200 times.
 
 There is one more limitation. The 5.6 percentage point improvement has been measured on the 8B model, the worst in the evaluation set, and 19.4% is nowhere near deployable. We ran v1 on one model only, because a fair comparison requires changing one thing at a time. So we can say the rewrite was worth about 5.6 points, or \$0.42 a claim. We cannot say the same gain would appear on haiku.
 
 ## Sensitivity
 
-Our pass rate is an estimate, so we show a range rather than one number: cost per successful task at ±10 percentage points around the measured 91.7%, with layer 1 held at its measured value.
+Our pass rate is an estimate, so we show a range rather than one number: cost per successful task from 10 points below the measured 91.7% up to 96.7%, with layer 1 held at its measured value.
 
 | Pass rate | Cost per successful task | Monthly @ 8,000 (layers 1 + 2) |
 |---|---|---|
