@@ -249,7 +249,7 @@ directly from their committed `results_live_*.json` files.
 |--------|------------|--------|--------|-----------|
 | M1 | `openai/gpt-4o-mini` | 33 | 8 | 24.2% |
 | M2 | `meta-llama/llama-3.1-8b-instruct` (with the v1 ↔ v2 descriptor study) | 108 | 15 | 13.9% |
-| M3 | `meta-llama/llama-3.1-8b-instruct` | 108 | 5 | 4.6% |
+| M3 | `meta-llama/llama-3.1-8b-instruct` | 108 | 21 | 19.4% |
 | M4 | `qwen/qwen-2.5-7b-instruct` | 108 | 44 | 40.7% |
 | M5 | `deepseek/deepseek-chat` | 108 | 85 | 78.7% |
 | M6 | `anthropic/claude-haiku-4.5` | 108 | 99 | **91.7%** |
@@ -272,3 +272,4 @@ Every change is scoped to one module and named for its brief item (e.g. `M3: …
 `M6: …`), so a reviewer can map each commit to a deliverable. When a commit also touches
 another member's artefact, the message says so — e.g. `d38e43b` "submit M1 live results;
 rename M3 result file".
+
