@@ -92,8 +92,8 @@ appendix/M2_v1_v2.md; the live v1/v2 run on M3's Llama is still to be done.]**
 
 The guardrails live in **code** (`guardrails.py`): `check_turns`, `check_budget`,
 `check_duplicate` and `gate` each raise `GuardrailStop` on violation; the agent
-records `stopped_by` and escalates. The D3(b) checklist (12 cases, ≥3 hostile)
-and `M4_guardrail_test.py` (7/7) exercise this layer.
+records `stopped_by` and escalates. The D3(b) checklist (14 cases, ≥3 hostile)
+and `M4_guardrail_test.py` (14/14) exercise this layer.
 
 ---
 
@@ -174,22 +174,26 @@ are logged per run, so a runaway loop shows as a turn count that never closes.
 **Failure 1 — runaway loop.** Without a step cap the agent calls tools forever
 and never closes; inside the token budget it hits the ceiling and burns money.
 Root cause: no termination guardrail, or one that did not interrupt.
-Reproduction: a 20-step same-call script trips `step_cap` at turn 9 (MAX_TURNS =
-8). Fix: `Guardrails.check_turns` raises `GuardrailStop("step_cap")` when
+Reproduction: `M4_guardrail_test.py` case **B4** — a 20-step script with
+*distinct* arguments (so de-duplication stays silent) trips `step_cap` at turn 9
+(MAX_TURNS = 8). (In the shipped config the budget ceiling binds first, so B4
+lifts it in-process only, to isolate the step cap; hostile case H3 keeps the
+shipped config and is stopped by `budget_ceiling`.) Fix: `Guardrails.check_turns` raises `GuardrailStop("step_cap")` when
 `turn > max_turns`; the agent records `stopped_by` and escalates. Before/after:
 an unbounded loop becomes a loud, logged stop with a decision on the record.
 
 **Failure 2 — duplicate-action loop.** The agent repeats the same call with the
 same arguments and makes no progress — eight turns, no conclusion, ~1.6× cost.
-Root cause: no de-duplication. Reproduction: `M4_guardrail_test.py` case 6 —
-`get_claim` called twice with identical args trips `duplicate_action`. Fix:
+Root cause: no de-duplication. Reproduction: `M4_guardrail_test.py` case **B3** —
+`get_claim` called twice with identical args trips `duplicate_action` (hostile
+variant: case H2*). Fix:
 `Guardrails.check_duplicate` signs each call as `(tool, repr(sorted(args)))` and
 raises `GuardrailStop` on a hit; the agent escalates.
 
 Both live in **code, not the prompt** — the loop failure in the agent-control
 layer, the duplicate in the guardrail layer — so they are reproducible and fixed
-by a raised exception, not a wording change. The D3(b) checklist (12 cases, ≥3
-hostile) and `M4_guardrail_test.py` (7/7) keep the layer honest.
+by a raised exception, not a wording change. The D3(b) checklist (14 cases, ≥3
+hostile) and `M4_guardrail_test.py` (14/14) keep the layer honest.
 
 ---
 
